@@ -1,0 +1,368 @@
+name: Galeri Temizle — APK Derle
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Java kur
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Flutter kur
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0'
+          channel: 'stable'
+
+      - name: Flutter projesi olustur
+        run: flutter create --project-name galeri_temizle --platforms android galeri_temizle
+
+      - name: photo_manager paketi ekle
+        working-directory: galeri_temizle
+        run: flutter pub add photo_manager
+
+      - name: main.dart yaz
+        working-directory: galeri_temizle
+        run: |
+          cat > lib/main.dart << 'DARTEOF'
+          import 'dart:typed_data';
+          import 'package:flutter/material.dart';
+          import 'package:photo_manager/photo_manager.dart';
+
+          void main() => runApp(const GaleriApp());
+
+          class GaleriApp extends StatelessWidget {
+            const GaleriApp({super.key});
+            @override
+            Widget build(BuildContext context) => MaterialApp(
+              debugShowCheckedModeBanner: false,
+              theme: ThemeData.dark(useMaterial3: true),
+              home: const AnaEkran(),
+            );
+          }
+
+          class AnaEkran extends StatefulWidget {
+            const AnaEkran({super.key});
+            @override
+            State<AnaEkran> createState() => _AnaEkranState();
+          }
+
+          class _AnaEkranState extends State<AnaEkran> {
+            List<AssetEntity> _liste = [];
+            int _i = 0;
+            bool _yukleniyor = true;
+            bool _izinYok = false;
+            int _silinen = 0;
+
+            @override
+            void initState() {
+              super.initState();
+              _yukle();
+            }
+
+            Future<void> _yukle() async {
+              setState(() { _yukleniyor = true; _izinYok = false; _i = 0; _silinen = 0; });
+              final izin = await PhotoManager.requestPermissionExtend();
+              if (!izin.isAuth) {
+                setState(() { _yukleniyor = false; _izinYok = true; });
+                return;
+              }
+              final albumlar = await PhotoManager.getAssetPathList(
+                type: RequestType.image,
+                onlyAll: true,
+              );
+              final varliklar = albumlar.isNotEmpty
+                  ? await albumlar[0].getAssetListRange(start: 0, end: 99999)
+                  : <AssetEntity>[];
+              setState(() { _liste = varliklar; _yukleniyor = false; });
+            }
+
+            Future<void> _sil() async {
+              if (_i >= _liste.length) return;
+              final varlik = _liste[_i];
+              final silinenler = await PhotoManager.editor.deleteWithConfirmation([varlik]);
+              if (silinenler.contains(varlik.id)) {
+                setState(() { _liste.removeAt(_i); _silinen++; });
+              }
+            }
+
+            void _tut() => setState(() => _i++);
+
+            @override
+            Widget build(BuildContext context) {
+              if (_yukleniyor) {
+                return const Scaffold(body: Center(child: CircularProgressIndicator()));
+              }
+              if (_izinYok) {
+                return Scaffold(
+                  body: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(32),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.no_photography_outlined, size: 72, color: Colors.grey),
+                          const SizedBox(height: 16),
+                          const Text('Galeri izni gerekli', style: TextStyle(fontSize: 22)),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Ayarlar > Uygulamalar > Galeri Temizle > Izinler\nyolundan fotograf iznini etkinlestir.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                          const SizedBox(height: 24),
+                          ElevatedButton(onPressed: _yukle, child: const Text('Tekrar Dene')),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              }
+              if (_liste.isEmpty || _i >= _liste.length) {
+                return Scaffold(
+                  body: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.task_alt, size: 88, color: Colors.green),
+                        const SizedBox(height: 20),
+                        const Text('Tamamlandi!', style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        Text('$_silinen fotograf silindi', style: const TextStyle(fontSize: 18, color: Colors.grey)),
+                        const SizedBox(height: 36),
+                        ElevatedButton.icon(
+                          onPressed: _yukle,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Yeniden Basla'),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+
+              return Scaffold(
+                backgroundColor: Colors.black,
+                appBar: AppBar(
+                  backgroundColor: Colors.black,
+                  elevation: 0,
+                  title: Text('${_i + 1} / ${_liste.length}', style: const TextStyle(fontSize: 18)),
+                  centerTitle: true,
+                  actions: [
+                    Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: Chip(
+                        avatar: const Icon(Icons.delete_outline, size: 16),
+                        label: Text('$_silinen'),
+                        backgroundColor: const Color(0x44EF5350),
+                        labelStyle: const TextStyle(color: Colors.redAccent),
+                      ),
+                    ),
+                  ],
+                ),
+                body: SwipeKart(
+                  key: ValueKey(_liste[_i].id),
+                  varlik: _liste[_i],
+                  onSol: _sil,
+                  onSag: _tut,
+                ),
+                bottomNavigationBar: SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(48, 8, 48, 16),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        _Btn(icon: Icons.close, label: 'Sil', color: Colors.red, onTap: _sil),
+                        _Btn(icon: Icons.favorite, label: 'Tut', color: Colors.green, onTap: _tut),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }
+          }
+
+          class _Btn extends StatelessWidget {
+            final IconData icon;
+            final String label;
+            final Color color;
+            final VoidCallback onTap;
+            const _Btn({required this.icon, required this.label, required this.color, required this.onTap});
+            @override
+            Widget build(BuildContext context) => GestureDetector(
+              onTap: onTap,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircleAvatar(backgroundColor: color, radius: 30, child: Icon(icon, color: Colors.white, size: 28)),
+                  const SizedBox(height: 6),
+                  Text(label, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 13)),
+                ],
+              ),
+            );
+          }
+
+          class SwipeKart extends StatefulWidget {
+            final AssetEntity varlik;
+            final VoidCallback onSol;
+            final VoidCallback onSag;
+            const SwipeKart({super.key, required this.varlik, required this.onSol, required this.onSag});
+            @override
+            State<SwipeKart> createState() => _SwipeKartState();
+          }
+
+          class _SwipeKartState extends State<SwipeKart> {
+            Offset _pos = Offset.zero;
+            @override
+            Widget build(BuildContext context) {
+              final w = MediaQuery.of(context).size.width;
+              final rot = (_pos.dx / w) * 0.35;
+              final prog = (_pos.dx.abs() / (w * 0.25)).clamp(0.0, 1.0);
+              return GestureDetector(
+                onPanUpdate: (d) => setState(() => _pos += d.delta),
+                onPanEnd: (_) {
+                  if (_pos.dx < -(w * 0.25)) widget.onSol();
+                  else if (_pos.dx > (w * 0.25)) widget.onSag();
+                  setState(() => _pos = Offset.zero);
+                },
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Center(
+                      child: Transform(
+                        transform: Matrix4.identity()
+                          ..translate(_pos.dx, _pos.dy * 0.15)
+                          ..rotateZ(rot),
+                        alignment: Alignment.center,
+                        child: FotoGorunum(varlik: widget.varlik),
+                      ),
+                    ),
+                    if (_pos.dx < -20)
+                      Positioned(
+                        top: 60, right: 24,
+                        child: Opacity(opacity: prog, child: _Etiket('SIL', Colors.red)),
+                      ),
+                    if (_pos.dx > 20)
+                      Positioned(
+                        top: 60, left: 24,
+                        child: Opacity(opacity: prog, child: _Etiket('TUT', Colors.green)),
+                      ),
+                  ],
+                ),
+              );
+            }
+          }
+
+          class _Etiket extends StatelessWidget {
+            final String text;
+            final Color color;
+            const _Etiket(this.text, this.color);
+            @override
+            Widget build(BuildContext context) => Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                border: Border.all(color: color, width: 3),
+                borderRadius: BorderRadius.circular(8),
+                color: color.withOpacity(0.15),
+              ),
+              child: Text(
+                text,
+                style: TextStyle(color: color, fontSize: 40, fontWeight: FontWeight.bold, letterSpacing: 2),
+              ),
+            );
+          }
+
+          class FotoGorunum extends StatefulWidget {
+            final AssetEntity varlik;
+            const FotoGorunum({required this.varlik});
+            @override
+            State<FotoGorunum> createState() => _FotoGorunumState();
+          }
+
+          class _FotoGorunumState extends State<FotoGorunum> {
+            late Future<Uint8List?> _yukleme;
+            @override
+            void initState() {
+              super.initState();
+              _yukleme = widget.varlik.thumbnailDataWithSize(
+                const ThumbnailSize(1080, 1920),
+                quality: 90,
+              );
+            }
+            @override
+            Widget build(BuildContext context) => FutureBuilder<Uint8List?>(
+              future: _yukleme,
+              builder: (ctx, snap) {
+                if (snap.hasData && snap.data != null) {
+                  return Image.memory(
+                    snap.data!,
+                    fit: BoxFit.contain,
+                    width: double.infinity,
+                    height: double.infinity,
+                  );
+                }
+                return const Center(child: CircularProgressIndicator());
+              },
+            );
+          }
+          DARTEOF
+
+      - name: AndroidManifest.xml guncelle
+        working-directory: galeri_temizle
+        run: |
+          cat > android/app/src/main/AndroidManifest.xml << 'XMLEOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+                  android:maxSdkVersion="32"/>
+              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+                  android:maxSdkVersion="29"/>
+              <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+              <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
+              <uses-permission android:name="android.permission.MANAGE_MEDIA"/>
+
+              <application
+                  android:label="Galeri Temizle"
+                  android:name="${applicationName}"
+                  android:icon="@mipmap/ic_launcher"
+                  android:requestLegacyExternalStorage="true">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop"
+                      android:theme="@style/LaunchTheme"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                      android:hardwareAccelerated="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <meta-data
+                          android:name="io.flutter.embedding.android.NormalTheme"
+                          android:resource="@style/NormalTheme"/>
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+                  <meta-data
+                      android:name="flutterEmbedding"
+                      android:value="2"/>
+              </application>
+          </manifest>
+          XMLEOF
+
+      - name: APK derle
+        working-directory: galeri_temizle
+        run: flutter build apk --release
+
+      - name: APK yukle
+        uses: actions/upload-artifact@v4
+        with:
+          name: galeri-temizle-apk
+          path: galeri_temizle/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
